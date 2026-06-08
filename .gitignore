@@ -9,9 +9,6 @@ desktop.ini
 ~$*
 *.bak
 
-# 第三方数据手册(不再分发,见 docs/references.md)
-docs/references/datasheets/
-
 # 固件构建产物
 firmware/build/
 firmware/.pio/
