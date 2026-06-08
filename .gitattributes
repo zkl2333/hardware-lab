@@ -1,0 +1,11 @@
+# 文本默认自动处理换行
+* text=auto
+
+# 二进制文件:禁止任何换行/编码转换,逐字节存储
+*.pdf   binary
+*.epro  binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.zip   binary
+*.bin   binary
