@@ -4,65 +4,124 @@
 
 ## 1. 目标与约束
 
-- **Cleanroom 实现 PiSugar 3 的 I²C 协议**,不逆向其 PCB/固件;让开源 [PiSugar Power Manager](https://github.com/PiSugar/pisugar-power-manager-rs) 和真树莓派把本板当正品 PiSugar 3 使用。
-- **完全协议兼容** + **5V 输出**(带 boost,能给真树莓派供电)。深睡低功耗加分不强求。
+- **Cleanroom 实现 PiSugar I²C 协议**的树莓派电源 / UPS HAT:从公开规范 + 开源客户端重新实现,**不逆向其 PCB/固件**。
+- 目标——让开源 PiSugar Power Manager 和真树莓派把本板当成正品使用。
 - 形态:树莓派 Zero 兼容(沿用 sleepy-sensor 形态)。
-- 为什么锁 PiSugar 3 而非 2:PiSugar 2 是树莓派**直读 IP5209 芯片寄存器**,没有独立协议层;PiSugar 3 才有 MCU 暴露的一套自定义 I²C 寄存器表,适合 cleanroom 兼容。
 
-## 2. 协议契约(I²C 从机 0x57,SMBus 单字节读写)
+## 2. 分阶段策略
 
-> 实证来源:开源客户端 `pisugar-core/src/pisugar3.rs`(比官方 wiki 更全)。这是固件必须实现的接口。
+### Phase 1 — PiSugar 2 兼容(当前目标)
+**用真 IP5209 直接上板**,纯硬件方案,几乎不需要写固件。树莓派直读 IP5209 寄存器(@0x75) + SD3078 RTC(@0x32)。
 
-| 寄存器 | 名称 | R/W | 实现要点 |
+目标:快速出一块能跑 pisugar-power-manager 的板子,验证形态(boost/保护/排针位置),建立自信。
+
+### Phase 2 — PiSugar 3 兼容(后续)
+MCU 暴露自定义寄存器表(@0x57),整套固件工作量大,待 Phase 1 完成后规划。
+
+---
+
+## 3. Phase 1 硬件架构(PiSugar 2)
+
+```
+USB-C 5V ──→ IP5209 (I²C @0x75, QFN-24)
+                ├─ VIN(pin20/21): USB 5V 输入
+                ├─ VBAT(pin9): 单节锂电(4.2V)
+                │    └─ 内置过充/过放/过流保护,无需外置 DW01A
+                ├─ LX(pin13/14/15): DCDC 开关节点
+                │    └─ 1µH 电感 (Isat/Idc >4.5A, DCR <0.01Ω)
+                ├─ VOUT(pin16/17): 5V/2.4A → 树莓派 GPIO pin2/4
+                ├─ CSIN/CSIN_S(pin10/11): 0.01Ω/1% 电流采样电阻(1206)
+                ├─ VREG(pin3): 3.1V/50mA 常通 LDO → SD3078 VCC + I²C 上拉
+                ├─ SCL(pin24 L1/SCL): I²C 时钟 → Pi GPIO3
+                ├─ SDA(pin1 L2/SDA): I²C 数据  → Pi GPIO2
+                ├─ KEY(pin8): 电源键
+                ├─ VSET(pin23): 悬空 → 4.2V 电池
+                ├─ RSET(pin5): ~100kΩ → GND (电池内阻补偿)
+                ├─ NTC(pin6): R分压到 ~1V (NTC 不用时: R4=2MΩ, R6=1MΩ)
+                └─ LIGHT(pin22): 接 GND (不用手电筒功能)
+
+SD3078 RTC (I²C @0x32)
+    ├─ VCC: VREG (3.1V)
+    ├─ SCL/SDA: 与 IP5209 共用 I²C 总线
+    └─ 32.768kHz 晶振
+```
+
+**关键决策**:IP5209 内置电池保护 → 无需外置保护 IC,BOM 精简。
+
+## 4. IP5209 关键参数(手册核实 ✓)
+
+| 参数 | 值 | 备注 |
+|---|---|---|
+| 封装 | QFN-24, 4×4mm, 0.5mm pitch | 有加热台可回流 |
+| Boost 输出 | 5V / 2.4A(typ), 2A@92.5%效率 | Pi Zero 足够 |
+| 充电电流 | 2.4A(typ) | |
+| 内置保护 | 过充/过放/过流/短路/NTC | 无需外置 DW01A |
+| VREG | 3.1V / 50mA 常通 LDO | 给 RTC 和上拉供电 |
+| 待机电流 | 75µA (VBAT=3.7V, VIN=0) | |
+| I²C 地址 | 0x75 | SCL=pin24, SDA=pin1 |
+| 电感要求 | 1µH, Isat/Idc >4.5A, DCR <0.01Ω | 如 SPM70701R0 |
+
+## 5. I²C 寄存器(pisugar-power-manager 读取,实证于 ip5209.rs)
+
+| 地址 | 名称 | R/W | 说明 |
 |---|---|---|---|
-| 0x02 | CTR1 主控 | R/W | **bit7=USB 已插**、**bit6=允许充电**、**bit5=输出使能**;低位=延时/防误触/电源键 |
-| 0x03 | CTR2 | R/W | 休眠 / 软关机(bit3/4/6) |
-| 0x04 | 芯片温度 | R | −40…85 |
-| 0x08 | TAP | R | 按键单击 / 双击 / 长按 |
-| 0x0B | 写使能 | W | **写 0x29 解锁、0x00 上锁**;客户端每次写都「解锁→写→上锁」 |
-| 0x20 / 0x21 | 电池控制 | R/W | 充电保护、SCL 唤醒位 |
-| 0x22 / 0x23 | 电压 H/L | R | **大端 16bit,单位 mV**:`v=(VH<<8)|VL` |
-| 0x26 / 0x27 | 输出电流 H/L | R | 大端 16bit |
-| 0x2A | 电量 % | R | 直接一个 uint8 |
-| 0x30 | RTC 控制 | R/W | |
-| 0x31–0x37 | RTC 年/月/日/周/时/分/秒 | R/W | **全 BCD**;年寄存器 = 年−2000 |
-| 0x40 | 闹钟控制 | R/W | **bit7=闹钟使能** |
-| 0x44 | 闹钟周重复掩码 | R/W | |
-| 0x45 / 0x46 / 0x47 | 闹钟 时/分/秒 | R/W | **BCD** |
-| 0x50 | 自定义 I²C 地址 | R/W | |
-| 0xE2… | 固件版本 | R | null 结尾 C 字符串(≤15 字节),如 `"1.0.0\0"` |
+| 0xa2 | VOLT_L | R | 电压低字节 |
+| 0xa3 | VOLT_H | R | 电压高字节 |
+| 0xa4 | CURR_L | R | 电流低字节 |
+| 0xa5 | CURR_H | R | 电流高字节 |
+| 0x55 | GPIO/CHG | R/W | 充电使能控制 |
+| 0x53 | GPIO_IN | R/W | GPIO 输入使能 |
+| 0x01 | SHUTDOWN | R/W | 关机控制 |
+| 0x02 | AUTO_OFF | R/W | 自动关机使能 |
 
-固件最小集 = 上表 + RTC 走时 + 「闹钟到点打开输出 = 定时开机」+ 电压→%曲线。
+**电压计算**: `V = (2600 ± raw × 0.26855) / 1000 V`(符号位由 VOLT_H bit5 决定)
 
-## 3. 硬件架构(草案,复用 sleepy-sensor v2 的 BQ24074 经验)
+**电流计算**: `I = raw × 0.745985 / 1000 A`
 
-```
-USB-C 5V ─→ BQ24074(power-path 充电)
-               ├ BAT → 单节锂电 + DW01A/FS8205A 保护
-               ├ /CHG、/PG 状态脚 → MCU GPIO(映射 CTR1 bit6 充电 / bit7 USB插)
-               └ OUT ─→ 升压 5V(EN 由 MCU 控)─→ 树莓派 5V(排针 pin2/4)
-MCU(I²C 从机 @0x57,跑自写固件):
-   ├ ADC:电池电压(→0x22/23)、输出电流采样(→0x26/27)
-   ├ RTC + 32.768k 晶振(→0x31-37 BCD),闹钟到点拉高 boost EN = 定时开机
-   ├ boost EN(CTR1 bit5)、充电使能(CTR1 bit6)、按键/TAP(0x08)
-   └ 自带常通小 LDO 从电池取电,维持 RTC + 协议响应
-```
-- BQ24074 的 **PG/CHG 状态脚**天然对应「USB 已插 / 允许充电」两位,映射干净。
-- 不强求深睡 → MCU 可常醒(mA 级),`0x20` 的 SCL 唤醒位可先不做,省掉最难的「I²C 从机低功耗唤醒」。
+**电量**: 电压→%插值曲线,3.1V=0%, 4.16V=100%
 
-## 4. 待定决策(选型必核手册,标 ⚠️ unclear)
+## 6. BOM 草案(Phase 1)
 
-1. ⚠️ **MCU**:方向 STM32G0/C0(便宜、I²C 从机、带 RTC+闹钟、ADC)。待核:I²C 从机地址匹配、RTC 闹钟、ADC 通道数、flash 够不够。
-2. ⚠️ **boost**:形态是 Pi Zero,Zero 仅需 ~0.5A,选 ~1.5A 同步 boost 足够;若要喂 Pi4/5(3A)另选。具体型号待核。
-3. **输出电流检测(0x26/27)**:做不做?不做就回 0,软件照跑,只是看不到放电电流。
+| 位号 | 器件 | 规格 | 备注 |
+|---|---|---|---|
+| U1 | IP5209 / IP5209T | QFN-24 | ⚠️ 见下方注意 |
+| U2 | SD3078 | SOT 封装 | RTC, JLCPCB C916255 |
+| L1 | 电感 | 1µH, Isat>4.5A, DCR<0.01Ω | SPM70701R0 或等效 |
+| R_sense | 采样电阻 | 0.01Ω / 1% / **1206** | 电流检测,精度关键 |
+| R_RSET | 电阻 | ~100kΩ / 0603 | 电池内阻补偿 |
+| R_NTC1/2 | 电阻 | 2MΩ + 1MΩ / 0603 | NTC 引脚偏置(不用 NTC) |
+| C_IN | 电容 | 10µF × 2 / 0603 / 16V+ | VIN 滤波 |
+| C_OUT | 电容 | 10µF × 4 + 22µF × 2 / 0603 | VOUT 滤波 |
+| C_BAT | 电容 | 10µF × 2 / 0603 | VBAT 滤波 |
+| C_VREG | 电容 | 2.2µF / 0603 | VREG 滤波 |
+| C_LX | 电容 | 2.2nF / 0603 | LX 节点 snubber |
+| R_pull | 电阻 | 4.7kΩ × 2 / 0603 | I²C 上拉到 VREG |
+| J_USB | USB-C 母座 | — | 充电输入 |
+| J_BAT | 电池连接器 | — | 单节锂电 |
+| J_PI | 40pin GPIO 排针 | 2×20P | 连接树莓派 |
+| SW1 | 按键 | 轻触 | 电源键 |
+| X1 | 晶振 | 32.768kHz | SD3078 用 |
 
-## 5. 工作量预判
+**⚠️ IP5209 货源**:
+- IP5209 (C181695) LCSC **缺货**;IP5209T (C284964) 有货 3000+,封装相同
+- IP5209T 寄存器兼容性 **unclear** — 未找到 IP5209T 手册确认
+- 建议先从淘宝搜原版 IP5209;或接受 IP5209T 风险(先买几颗测试再量产)
 
-- PCB:中等(BQ24074 + boost + MCU + 保护),有加热台能回流。
-- **固件 ≈ 80% 工作量**,是本项目主体。
+## 7. 待定决策
 
-## 6. 参考
+1. ⚠️ **IP5209T 兼容性**:买到 IP5209T 后,用 Pi 跑 `i2cdump -y 1 0x75` 验证寄存器响应是否与 ip5209.rs 一致。
+2. **SD3078 是否 Phase 1 必须**:pisugar-power-manager 的 RTC 功能由 SD3078 提供;若只想先验证电源/电量部分,可暂时跳过 RTC,引脚预留即可。
+3. **LED SOC 指示**:加 4 个 LED(IP5209 原生支持)or 省掉?Pi Zero 形态空间紧张。
 
-- 协议金标准:[pisugar3.rs](https://raw.githubusercontent.com/PiSugar/pisugar-power-manager-rs/master/pisugar-core/src/pisugar3.rs)
-- 官方寄存器说明:[PiSugar 3 I²C Datasheet](https://github.com/PiSugar/PiSugar/wiki/PiSugar-3-I2C-Datasheet)
-- 开源上位机:[pisugar-power-manager-rs](https://github.com/PiSugar/pisugar-power-manager-rs)(GPL-3.0)
+## 8. 工作量预判(Phase 1)
+
+- **固件:几乎为零** — IP5209 硬件自治,Pi 直读寄存器。
+- **PCB**:中等(QFN-24 回流 + 电源布局),主要工作在画板。
+- **调试**:安装 pisugar-power-manager,`i2cdetect` 确认 0x75/0x32 存在即成功。
+
+## 9. 参考
+
+- IP5209 数据手册 V1.01 (INJOINIC, 2014): [LCSC C181695](https://www.lcsc.com/product-detail/C181695.html)
+- PiSugar 2 I²C 手册: [PiSugar Wiki](https://github.com/PiSugar/PiSugar/wiki/PiSugar-2-(Pro)-I2C-Manual)
+- 驱动源码(寄存器金标准): [ip5209.rs](https://github.com/PiSugar/pisugar-power-manager-rs/blob/master/pisugar-core/src/ip5209.rs)
+- SD3078 RTC: JLCPCB C916255, 内核驱动 `rtc-sd3078`
