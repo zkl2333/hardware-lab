@@ -9,7 +9,7 @@ desktop.ini
 ~$*
 *.bak
 
-# 固件构建产物
-firmware/build/
-firmware/.pio/
-firmware/managed_components/
+# 固件构建产物(各子项目通用)
+**/firmware/build/
+**/firmware/.pio/
+**/firmware/managed_components/
