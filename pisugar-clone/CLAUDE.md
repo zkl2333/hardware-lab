@@ -1,10 +1,11 @@
 # CLAUDE.md — pisugar-clone
 
-Cleanroom 实现 **PiSugar 3 的 I²C 协议**的树莓派电源 / UPS HAT:从公开规范 + 开源客户端重新实现,**不逆向其 PCB/固件**。目标——让开源 PiSugar Power Manager 和真树莓派把本板当成正品 PiSugar 3。
+Cleanroom 实现 **PiSugar I²C 协议兼容**的树莓派电源 / UPS HAT:从公开规范 + 开源客户端重新实现,**不逆向其 PCB/固件**。目标——让开源 PiSugar Power Manager 和真树莓派把本板当成正品使用。
 
 > 通用工作约定见仓库顶层 [../CLAUDE.md](../CLAUDE.md);设计源头:[docs/design.md](docs/design.md)。
 
-## 定位(已拍板)
-- **完全协议兼容** + **5V 输出**(带 boost,能给真树莓派供电)。深睡低功耗是加分项,不强求。
-- **固件是工作量大头**:I²C 从机 + 写保护门控 + 整张寄存器表 + RTC/BCD + 闹钟唤醒 + 电量曲线 + 按键状态机 + 版本串。
+## 分阶段定位(已拍板)
+- **Phase 1 = PiSugar 2 兼容(当前)**:直接上真 IP5209(I²C @0x75)+ SD3078 RTC(@0x32),**纯硬件、几乎无固件**。目标是快速出一块能跑 pisugar-power-manager 的板,验证形态、建立自信。货源:IP5209 淘宝 ~¥1;备选 IP5109(pin2pin + 寄存器官方兼容)。
+- **Phase 2 = PiSugar 3 兼容(后续)**:MCU 暴露自定义寄存器表(@0x57),**固件是工作量大头**:I²C 从机 + 写保护门控 + 整张寄存器表 + RTC/BCD + 闹钟唤醒 + 电量曲线 + 按键状态机 + 版本串。
+- **两阶段共同要求**:完全协议兼容 + 5V 输出(带 boost,能给真树莓派供电)。深睡低功耗是加分项,不强求。
 - 合法性:实现公开协议属 cleanroom;参考开源**客户端**(协议消费方)可以,**别读其 MCU 固件二进制**。
