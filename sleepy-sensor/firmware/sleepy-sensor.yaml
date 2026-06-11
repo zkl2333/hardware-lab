@@ -25,6 +25,12 @@ ota:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  # v1 验证期不省电:modem-sleep 会让 mDNS/API 长连接时断时续,HA 显示不可用
+  # 以后上 deep_sleep 省电时再权衡
+  power_save_mode: none
+  # 砍 WiFi 发射电流尖峰防欠压:信号 -30dBm 余量巨大,降功率纯赚
+  # (电池电压低时 HT7833 压差余量小,345mA TX 尖峰会把 3V3 拉进欠压区)
+  output_power: 8.5dB
   ap:
     ssid: "${name} fallback"
 

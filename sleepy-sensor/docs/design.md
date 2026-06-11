@@ -16,6 +16,8 @@
 - **根因**:LDO **HT7533 只有 100mA**,带不动 ESP32-C3 峰值 345mA。(当时也未装电池。)
 - **修复**:U3 换 **HT7833(500mA,同 SOT-89 脚位)**。装上电池后可正常工作;**大概率不装电池也能 USB 烧录**(弱 LDO 才是重启真因,非缺电池)。
 - **二次排查(2026-06)**:换 HT7833 后 3V3 正常但仍"无限重启"——串口显示 `invalid header: 0xffffffff`,**实为 Flash 空片无固件**,ROM bootloader 反复重试导致 USB 反复枚举,听感像重启。烧入固件后连续运行无复位,**v1 硬件验证通过**。教训:USB 连接/断开循环 ≠ 一定是电源问题,先抓串口 log 看 `rst:` 原因。
+- **三次排查(2026-06)**:ESPHome 固件偶发 `E BOD: Brownout detector was triggered` 欠压循环(同板同电池,早上稳晚上崩,临界态)。**WiFi 满功率 TX 尖峰 ≈345mA 叠加 HT7833 压差,3V3 余量不足**。修复:`wifi: output_power: 8.5dB`(信号 -30dBm 余量巨大),60s 零复位。**v2 用 BQ24074+RT9080 后此问题应消失,但「降 TX 功率」值得保留为低功耗默认**。
+- 固件:[firmware/sleepy-sensor.yaml](../firmware/sleepy-sensor.yaml)(ESPHome,电压上报 HA;面板在 HA 机器 Docker,首刷走本机 esptool,后续 OTA)。
 - v1 充电芯片看丝印定充电电阻:**LTH7R/TP4054 → 1.8kΩ**;**TP4056 → 2.2kΩ**(0.5C≈550mA)。
 
 ## 3. v2 电源系统(定稿)
