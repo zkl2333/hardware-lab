@@ -36,30 +36,17 @@ wifi:
 
 captive_portal:
 
-# GPIO3 拉高 → 2N7002 导通 → 接通 100k/100k 分压(只在测量时耗电)
-output:
-  - platform: gpio
-    pin: GPIO3
-    id: bat_divider_gate
-
+# v1 实际电路:BAT+ —R4 1M— IO4(ADC) —R5 1M— GND,常通分压(漏电~2µA)
+# 没有 MOS 门控(那是 v2 设计),直接周期采样即可
 sensor:
   - platform: adc
     pin: GPIO4
     name: "Battery Voltage"
     id: bat_voltage
     attenuation: 12db
-    update_interval: never   # 由下面 interval 开分压后主动触发
+    update_interval: 60s
     filters:
-      - multiply: 2.0        # 100k/100k 分压还原
+      - multiply: 2.0        # 1M/1M 分压还原
   - platform: wifi_signal
     name: "WiFi Signal"
     update_interval: 60s
-
-# 每 60s:开分压 → 等稳定 → 采样 → 关分压,电池零漏电
-interval:
-  - interval: 60s
-    then:
-      - output.turn_on: bat_divider_gate
-      - delay: 100ms
-      - component.update: bat_voltage
-      - output.turn_off: bat_divider_gate
